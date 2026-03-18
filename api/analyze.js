@@ -1,21 +1,28 @@
-export const config = { maxDuration: 55 };
+export const config = { runtime: 'edge' };
 
-export default async function handler(req, res) {
+export default async function handler(req) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
-  const { url } = req.body;
+  const { url } = await req.json();
 
+  // Jina Reader: rendert JS-Seiten (Perspective, ClickFunnels etc.)
+  // Timeout 10s damit danach noch Zeit für Claude bleibt
   let pageContent = '';
   try {
     const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
-      headers: { 'Accept': 'text/plain', 'X-Return-Format': 'text' },
-      signal: AbortSignal.timeout(25000),
+      headers: { 'Accept': 'text/plain', 'X-Return-Format': 'text', 'X-Timeout': '8' },
+      signal: AbortSignal.timeout(10000),
     });
-    const text = await jinaRes.text();
-    if (text && text.length > 200) {
-      pageContent = text.slice(0, 12000);
+    if (jinaRes.ok) {
+      const text = await jinaRes.text();
+      if (text && text.length > 200) {
+        pageContent = text.slice(0, 10000);
+      }
     }
   } catch {
     pageContent = '';
@@ -23,53 +30,30 @@ export default async function handler(req, res) {
 
   const userMessage = pageContent.length > 200
     ? `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt:\n${pageContent}`
-    : `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt konnte nicht geladen werden. Weise in jeder Section darauf hin.`;
+    : `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt nicht verfügbar. Weise in jeder Section kurz darauf hin.`;
 
-  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen.
+  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen. Antworte NUR mit validem JSON ohne Backticks oder Text davor/danach. Max 2 Sätze pro Feld. Nur analysieren was im Seiteninhalt steht.
 
-REGEL 1: Antworte NUR mit validem JSON. Keine Backticks, kein Text davor oder danach.
-REGEL 2: Analysiere ausschließlich was im Seiteninhalt steht. Niemals erfinden.
-REGEL 3: Zitiere konkret was du siehst (Headline-Text, CTA-Text, Testimonials etc.).
-REGEL 4: Maximal 2 kurze Sätze pro Textfeld.
+{"gesamtScore":65,"gesamtBewertung":"2 Sätze.","topProblem":"1 Satz.","quickWin":"1 Satz.","sections":[{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁","score":6,"befund":"1-2 Sätze.","problem":"1 Satz.","empfehlung":"1-2 Sätze."}]}
 
-JSON-Struktur:
-{
-  "gesamtScore": 65,
-  "gesamtBewertung": "Max 2 Sätze.",
-  "topProblem": "Max 1 Satz.",
-  "quickWin": "Max 1 Satz.",
-  "sections": [
-    {
-      "id": "erstereindruck",
-      "title": "Erster Eindruck",
-      "subtitle": "Above the Fold",
-      "icon": "👁",
-      "score": 6,
-      "befund": "Was tatsächlich auf der Seite steht.",
-      "problem": "Konkretes Problem.",
-      "empfehlung": "Konkrete Empfehlung."
-    }
-  ]
-}
-
-Genau 12 sections in dieser Reihenfolge:
-1. id "erstereindruck", title "Erster Eindruck", subtitle "Above the Fold", icon "👁"
-2. id "headline", title "Headline & Hook", subtitle "Aufmerksamkeit & Relevanz", icon "🎯"
-3. id "valueproposition", title "Value Proposition", subtitle "Nutzenversprechen", icon "💎"
-4. id "zielgruppe", title "Zielgruppen-Fit", subtitle "Ansprache & Relevanz", icon "👥"
-5. id "socialproof", title "Social Proof", subtitle "Vertrauen & Glaubwürdigkeit", icon "⭐"
-6. id "cta", title "Call-to-Action", subtitle "Aufforderung & Klarheit", icon "🔴"
-7. id "copy", title "Copy & Sprache", subtitle "Überzeugungskraft", icon "✍️"
-8. id "einwandbehandlung", title "Einwandbehandlung", subtitle "Bedenken & Widerstände", icon "🛡"
-9. id "conversionkiller", title "Conversion-Killer", subtitle "Ablenkungen & Fehler", icon "⚠️"
-10. id "mobile", title "Mobile Experience", subtitle "Smartphone-Optimierung", icon "📱"
-11. id "technik", title "Technische Punkte", subtitle "Ladezeit & Performance", icon "⚙️"
-12. id "fazit", title "Prioritäten & Fazit", subtitle "Dein Aktionsplan", icon "📋"
+12 sections exakt in dieser Reihenfolge mit diesen Werten:
+{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁"}
+{"id":"headline","title":"Headline & Hook","subtitle":"Aufmerksamkeit & Relevanz","icon":"🎯"}
+{"id":"valueproposition","title":"Value Proposition","subtitle":"Nutzenversprechen","icon":"💎"}
+{"id":"zielgruppe","title":"Zielgruppen-Fit","subtitle":"Ansprache & Relevanz","icon":"👥"}
+{"id":"socialproof","title":"Social Proof","subtitle":"Vertrauen & Glaubwürdigkeit","icon":"⭐"}
+{"id":"cta","title":"Call-to-Action","subtitle":"Aufforderung & Klarheit","icon":"🔴"}
+{"id":"copy","title":"Copy & Sprache","subtitle":"Überzeugungskraft","icon":"✍️"}
+{"id":"einwandbehandlung","title":"Einwandbehandlung","subtitle":"Bedenken & Widerstände","icon":"🛡"}
+{"id":"conversionkiller","title":"Conversion-Killer","subtitle":"Ablenkungen & Fehler","icon":"⚠️"}
+{"id":"mobile","title":"Mobile Experience","subtitle":"Smartphone-Optimierung","icon":"📱"}
+{"id":"technik","title":"Technische Punkte","subtitle":"Ladezeit & Performance","icon":"⚙️"}
+{"id":"fazit","title":"Prioritäten & Fazit","subtitle":"Dein Aktionsplan","icon":"📋"}
 
 Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -78,14 +62,14 @@ Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 3000,
+        max_tokens: 2500,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userMessage }],
       }),
     });
 
-    const data = await response.json();
-    const raw = data.content?.[0]?.text?.trim() ?? '';
+    const data = await claudeRes.json();
+    const raw = (data.content?.[0]?.text ?? '').trim();
 
     let parsed;
     try {
@@ -96,11 +80,20 @@ Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
     }
 
     if (!parsed) {
-      return res.status(500).json({ error: 'Bitte nochmal versuchen' });
+      return new Response(JSON.stringify({ error: 'Bitte nochmal versuchen' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
-    return res.status(200).json(parsed);
+    return new Response(JSON.stringify(parsed), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (err) {
-    return res.status(500).json({ error: err.message || 'Fehler' });
+    return new Response(JSON.stringify({ error: err.message ?? 'Fehler' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 }
