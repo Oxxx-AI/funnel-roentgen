@@ -10,8 +10,6 @@ export default async function handler(req) {
 
   const { url } = await req.json();
 
-  // Jina Reader: rendert JS-Seiten (Perspective, ClickFunnels etc.)
-  // Timeout 10s damit danach noch Zeit für Claude bleibt
   let pageContent = '';
   try {
     const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
@@ -21,7 +19,15 @@ export default async function handler(req) {
     if (jinaRes.ok) {
       const text = await jinaRes.text();
       if (text && text.length > 200) {
-        pageContent = text.slice(0, 10000);
+        // Anführungszeichen und Sonderzeichen entfernen die JSON brechen
+        const clean = text
+          .replace(/"/g, "'")
+          .replace(/\\/g, '')
+          .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 8000);
+        pageContent = clean;
       }
     }
   } catch {
@@ -30,27 +36,19 @@ export default async function handler(req) {
 
   const userMessage = pageContent.length > 200
     ? `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt:\n${pageContent}`
-    : `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt nicht verfügbar. Weise in jeder Section kurz darauf hin.`;
+    : `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt nicht verfügbar. Weise in jeder Section darauf hin.`;
 
-  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen. Antworte NUR mit validem JSON ohne Backticks oder Text davor/danach. Max 2 Sätze pro Feld. Nur analysieren was im Seiteninhalt steht.
+  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen.
 
-{"gesamtScore":65,"gesamtBewertung":"2 Sätze.","topProblem":"1 Satz.","quickWin":"1 Satz.","sections":[{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁","score":6,"befund":"1-2 Sätze.","problem":"1 Satz.","empfehlung":"1-2 Sätze."}]}
+KRITISCH: Antworte NUR mit validem JSON. Niemals Backticks, niemals Text davor oder danach.
+KRITISCH: Verwende in allen Textwerten NIEMALS doppelte Anführungszeichen. Nutze stattdessen Apostrophe oder umschreibe.
+KRITISCH: Max 1 Satz pro Feld. Kurz und konkret.
+KRITISCH: Nur analysieren was im Seiteninhalt steht. Nichts erfinden.
 
-12 sections exakt in dieser Reihenfolge mit diesen Werten:
-{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁"}
-{"id":"headline","title":"Headline & Hook","subtitle":"Aufmerksamkeit & Relevanz","icon":"🎯"}
-{"id":"valueproposition","title":"Value Proposition","subtitle":"Nutzenversprechen","icon":"💎"}
-{"id":"zielgruppe","title":"Zielgruppen-Fit","subtitle":"Ansprache & Relevanz","icon":"👥"}
-{"id":"socialproof","title":"Social Proof","subtitle":"Vertrauen & Glaubwürdigkeit","icon":"⭐"}
-{"id":"cta","title":"Call-to-Action","subtitle":"Aufforderung & Klarheit","icon":"🔴"}
-{"id":"copy","title":"Copy & Sprache","subtitle":"Überzeugungskraft","icon":"✍️"}
-{"id":"einwandbehandlung","title":"Einwandbehandlung","subtitle":"Bedenken & Widerstände","icon":"🛡"}
-{"id":"conversionkiller","title":"Conversion-Killer","subtitle":"Ablenkungen & Fehler","icon":"⚠️"}
-{"id":"mobile","title":"Mobile Experience","subtitle":"Smartphone-Optimierung","icon":"📱"}
-{"id":"technik","title":"Technische Punkte","subtitle":"Ladezeit & Performance","icon":"⚙️"}
-{"id":"fazit","title":"Prioritäten & Fazit","subtitle":"Dein Aktionsplan","icon":"📋"}
+Exakte JSON-Struktur:
+{"gesamtScore":65,"gesamtBewertung":"2 kurze Saetze.","topProblem":"1 Satz.","quickWin":"1 Satz.","sections":[{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"headline","title":"Headline & Hook","subtitle":"Aufmerksamkeit & Relevanz","icon":"🎯","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"valueproposition","title":"Value Proposition","subtitle":"Nutzenversprechen","icon":"💎","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"zielgruppe","title":"Zielgruppen-Fit","subtitle":"Ansprache & Relevanz","icon":"👥","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"socialproof","title":"Social Proof","subtitle":"Vertrauen & Glaubwuerdigkeit","icon":"⭐","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"cta","title":"Call-to-Action","subtitle":"Aufforderung & Klarheit","icon":"🔴","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"copy","title":"Copy & Sprache","subtitle":"Ueberzeugungskraft","icon":"✍️","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"einwandbehandlung","title":"Einwandbehandlung","subtitle":"Bedenken & Widerstaende","icon":"🛡","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"conversionkiller","title":"Conversion-Killer","subtitle":"Ablenkungen & Fehler","icon":"⚠️","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"mobile","title":"Mobile Experience","subtitle":"Smartphone-Optimierung","icon":"📱","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"technik","title":"Technische Punkte","subtitle":"Ladezeit & Performance","icon":"⚙️","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."},{"id":"fazit","title":"Prioritaeten & Fazit","subtitle":"Dein Aktionsplan","icon":"📋","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."}]}
 
-Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
+Ersetze alle Platzhalterwerte mit echten Analysen. Score 1-4 kritisch, 5-7 ausbaufaehig, 8-10 gut.`;
 
   try {
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -71,12 +69,21 @@ Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
     const data = await claudeRes.json();
     const raw = (data.content?.[0]?.text ?? '').trim();
 
-    let parsed;
+    // Aggressiver JSON-Extraktor
+    let parsed = null;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      const match = raw.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : null;
+      // Ersten { bis letzten } extrahieren
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      if (start !== -1 && end !== -1) {
+        try {
+          parsed = JSON.parse(raw.slice(start, end + 1));
+        } catch {
+          parsed = null;
+        }
+      }
     }
 
     if (!parsed) {
