@@ -23,12 +23,9 @@ function ScoreRing({ score, size = 88 }) {
 function ScoreBadge({ score }) {
   const color = score >= 8 ? "#22c55e" : score >= 5 ? "#f59e0b" : ACCENT;
   return (
-    <div style={{
-      fontSize: 12, fontWeight: 700, color,
-      background: color + "1a", padding: "3px 10px",
-      borderRadius: 20, border: `1px solid ${color}33`,
-      whiteSpace: "nowrap"
-    }}>{score}/10</div>
+    <div style={{ fontSize: 12, fontWeight: 700, color, background: color + "1a", padding: "3px 10px", borderRadius: 20, border: `1px solid ${color}33`, whiteSpace: "nowrap" }}>
+      {score}/10
+    </div>
   );
 }
 
@@ -62,18 +59,34 @@ export default function FunnelRoentgen() {
     if (!url.trim()) return;
     setPhase("scanning");
     setScanStep(0);
-    const iv = setInterval(() => setScanStep(s => Math.min(s + 1, steps.length - 1)), 2200);
+    const iv = setInterval(() => setScanStep(s => Math.min(s + 1, steps.length - 1)), 3000);
 
     try {
+      // Schritt 1: Jina Reader im Browser aufrufen (kein Server-Timeout)
+      let pageContent = "";
+      try {
+        const jinaRes = await fetch(`https://r.jina.ai/${url.trim()}`, {
+          headers: { "Accept": "text/plain", "X-Return-Format": "text" },
+        });
+        if (jinaRes.ok) {
+          const text = await jinaRes.text();
+          if (text && text.length > 200) {
+            pageContent = text.slice(0, 10000);
+          }
+        }
+      } catch {
+        pageContent = "";
+      }
+
+      // Schritt 2: Text + URL an API schicken — API ruft nur Claude auf (~8s)
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), pageContent }),
       });
 
       clearInterval(iv);
 
-      // Sicher parsen — auch wenn Vercel eine HTML-Fehlerseite zurückgibt
       const text = await res.text();
       let parsed;
       try {
@@ -97,16 +110,9 @@ export default function FunnelRoentgen() {
   const base = { fontFamily: "'Inter', system-ui, sans-serif" };
 
   if (phase === "input") return (
-    <div style={{ ...base, minHeight: 480, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
-      <div style={{
-        width: "100%", maxWidth: 560,
-        background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)",
-        borderRadius: 18, padding: "2.5rem 2rem", marginBottom: "1rem"
-      }}>
-        <div style={{ fontSize: 11, letterSpacing: 3, fontWeight: 700, color: ACCENT, marginBottom: 14 }}>
-          OCHSOCHAL.DE
-        </div>
+    <div style={{ ...base, minHeight: 480, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
+      <div style={{ width: "100%", maxWidth: 560, background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)", borderRadius: 18, padding: "2.5rem 2rem", marginBottom: "1rem" }}>
+        <div style={{ fontSize: 11, letterSpacing: 3, fontWeight: 700, color: ACCENT, marginBottom: 14 }}>OCHSOCHAL.DE</div>
         <h1 style={{ margin: "0 0 10px", fontSize: "clamp(28px,5vw,46px)", fontWeight: 900, color: "#fff", lineHeight: 1.05, letterSpacing: -1 }}>
           FUNNEL<span style={{ color: ACCENT }}>RÖNTGEN</span>
         </h1>
@@ -118,18 +124,9 @@ export default function FunnelRoentgen() {
           onChange={e => setUrl(e.target.value)}
           onKeyDown={e => e.key === "Enter" && runAnalysis()}
           placeholder="https://dein-funnel.de/landing-page"
-          style={{
-            width: "100%", padding: "13px 15px", fontSize: 14,
-            background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)",
-            borderRadius: 10, color: "#fff", outline: "none",
-            boxSizing: "border-box", marginBottom: 10,
-          }}
+          style={{ width: "100%", padding: "13px 15px", fontSize: 14, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, color: "#fff", outline: "none", boxSizing: "border-box", marginBottom: 10 }}
         />
-        <button onClick={runAnalysis} style={{
-          width: "100%", padding: "14px", background: ACCENT,
-          color: "#fff", border: "none", borderRadius: 10,
-          fontSize: 15, fontWeight: 800, cursor: "pointer", letterSpacing: 0.3
-        }}>
+        <button onClick={runAnalysis} style={{ width: "100%", padding: "14px", background: ACCENT, color: "#fff", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 800, cursor: "pointer", letterSpacing: 0.3 }}>
           Funnel jetzt röntgen →
         </button>
       </div>
@@ -144,13 +141,8 @@ export default function FunnelRoentgen() {
   );
 
   if (phase === "scanning") return (
-    <div style={{ ...base, minHeight: 420, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
-      <div style={{
-        background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)",
-        borderRadius: 18, padding: "2.5rem", width: "100%", maxWidth: 440,
-        display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center"
-      }}>
+    <div style={{ ...base, minHeight: 420, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
+      <div style={{ background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)", borderRadius: 18, padding: "2.5rem", width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
         <div style={{ position: "relative", width: 70, height: 70, marginBottom: "1.5rem" }}>
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `3px solid transparent`, borderTopColor: ACCENT, animation: "spin 0.7s linear infinite" }} />
           <div style={{ position: "absolute", inset: 8, borderRadius: "50%", border: `2px solid transparent`, borderTopColor: ACCENT + "66", animation: "spin 1.2s linear infinite reverse" }} />
@@ -175,10 +167,7 @@ export default function FunnelRoentgen() {
       <div style={{ fontSize: 40, marginBottom: 16 }}>⚠️</div>
       <h2 style={{ margin: "0 0 8px" }}>Analyse fehlgeschlagen</h2>
       <p style={{ color: "var(--color-text-secondary)", marginBottom: 24 }}>{errorMsg}</p>
-      <button onClick={() => { setPhase("input"); setReport(null); }} style={{
-        padding: "12px 28px", background: ACCENT, color: "#fff",
-        border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer"
-      }}>← Nochmal versuchen</button>
+      <button onClick={() => { setPhase("input"); setReport(null); }} style={{ padding: "12px 28px", background: ACCENT, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>← Nochmal versuchen</button>
     </div>
   );
 
@@ -226,8 +215,7 @@ export default function FunnelRoentgen() {
           {report.sections?.map(s => {
             const c = s.score >= 8 ? "#22c55e" : s.score >= 5 ? "#f59e0b" : ACCENT;
             return (
-              <div key={s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
-                style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" }}>
+              <div key={s.id} onClick={() => setOpen(open === s.id ? null : s.id)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" }}>
                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: c, flexShrink: 0 }} />
                 <span style={{ fontSize: 12, color: "var(--color-text-primary)", flex: 1 }}>{s.title}</span>
                 <span style={{ fontSize: 12, fontWeight: 800, color: c }}>{s.score}/10</span>
