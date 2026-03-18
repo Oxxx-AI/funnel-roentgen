@@ -1,51 +1,21 @@
-export default async function handler(req, res) {
+export const config = { runtime: 'edge' };
+
+export default async function handler(req) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
   }
 
-  const { url } = req.body;
+  const { url } = await req.json();
 
-  const SYSTEM_PROMPT = `Du bist ein Elite-Funnel-Analyst für DACH-Coaches, Berater und Agenturen.
+  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches und Berater. Antworte NUR mit validem JSON, keine Backticks, kein Text davor oder danach. Maximal 1 Satz pro Textfeld.
 
-WICHTIG: Antworte NUR mit validem JSON. Keine Backticks, kein Markdown, keine Erklärungen.
+{"gesamtScore":65,"gesamtBewertung":"2 Sätze max.","topProblem":"1 Satz.","quickWin":"1 Satz.","sections":[{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."}]}
 
-Halte jeden Textwert KURZ: max 2 Sätze pro Feld.
+12 sections exakt in dieser Reihenfolge:
+erstereindruck👁, headline🎯, valueproposition💎, zielgruppe👥, socialproof⭐, cta🔴, copy✍️, einwandbehandlung🛡, conversionkiller⚠️, mobile📱, technik⚙️, fazit📋
 
-JSON-Struktur:
-{
-  "gesamtScore": 65,
-  "gesamtBewertung": "Max 2 Sätze.",
-  "topProblem": "Max 1 Satz.",
-  "quickWin": "Max 1 Satz.",
-  "sections": [
-    {
-      "id": "erstereindruck",
-      "title": "Erster Eindruck",
-      "subtitle": "Above the Fold",
-      "icon": "👁",
-      "score": 6,
-      "befund": "Max 2 Sätze.",
-      "problem": "Max 1 Satz.",
-      "empfehlung": "Max 2 Sätze."
-    }
-  ]
-}
-
-Genau 12 sections in dieser Reihenfolge:
-1. id "erstereindruck", title "Erster Eindruck", subtitle "Above the Fold", icon "👁"
-2. id "headline", title "Headline & Hook", subtitle "Aufmerksamkeit & Relevanz", icon "🎯"
-3. id "valueproposition", title "Value Proposition", subtitle "Nutzenversprechen", icon "💎"
-4. id "zielgruppe", title "Zielgruppen-Fit", subtitle "Ansprache & Relevanz", icon "👥"
-5. id "socialproof", title "Social Proof", subtitle "Vertrauen & Glaubwürdigkeit", icon "⭐"
-6. id "cta", title "Call-to-Action", subtitle "Aufforderung & Klarheit", icon "🔴"
-7. id "copy", title "Copy & Sprache", subtitle "Überzeugungskraft", icon "✍️"
-8. id "einwandbehandlung", title "Einwandbehandlung", subtitle "Bedenken & Widerstände", icon "🛡"
-9. id "conversionkiller", title "Conversion-Killer", subtitle "Ablenkungen & Fehler", icon "⚠️"
-10. id "mobile", title "Mobile Experience", subtitle "Smartphone-Optimierung", icon "📱"
-11. id "technik", title "Technische Punkte", subtitle "Ladezeit & Performance", icon "⚙️"
-12. id "fazit", title "Prioritäten & Fazit", subtitle "Dein Aktionsplan", icon "📋"
-
-Sei direkt und konkret. Score 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
+Titles: Erster Eindruck, Headline & Hook, Value Proposition, Zielgruppen-Fit, Social Proof, Call-to-Action, Copy & Sprache, Einwandbehandlung, Conversion-Killer, Mobile Experience, Technische Punkte, Prioritäten & Fazit
+Subtitles: Above the Fold, Aufmerksamkeit & Relevanz, Nutzenversprechen, Ansprache & Relevanz, Vertrauen & Glaubwürdigkeit, Aufforderung & Klarheit, Überzeugungskraft, Bedenken & Widerstände, Ablenkungen & Fehler, Smartphone-Optimierung, Ladezeit & Performance, Dein Aktionsplan`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -57,38 +27,32 @@ Sei direkt und konkret. Score 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 8000,
+        max_tokens: 3000,
         system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: `Analysiere diesen Funnel: ${url}` }],
+        messages: [{ role: 'user', content: `Analysiere: ${url}` }],
       }),
     });
 
     const data = await response.json();
-
-    if (!data.content || !data.content[0]) {
-      return res.status(500).json({ error: 'Keine Antwort von Claude erhalten' });
-    }
-
-    const raw = data.content[0].text.trim();
+    const raw = data.content?.[0]?.text?.trim() ?? '';
 
     let parsed;
     try {
       parsed = JSON.parse(raw);
     } catch {
       const match = raw.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          parsed = JSON.parse(match[0]);
-        } catch {
-          return res.status(500).json({ error: 'JSON Parse Fehler' });
-        }
-      } else {
-        return res.status(500).json({ error: 'Kein JSON in Antwort gefunden' });
-      }
+      parsed = match ? JSON.parse(match[0]) : null;
     }
 
-    res.status(200).json(parsed);
+    if (!parsed) {
+      return new Response(JSON.stringify({ error: 'JSON Parse Fehler' }), { status: 500 });
+    }
+
+    return new Response(JSON.stringify(parsed), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Unbekannter Fehler' });
+    return new Response(JSON.stringify({ error: err.message || 'Fehler' }), { status: 500 });
   }
 }
