@@ -3,33 +3,35 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { url, pageContent } = req.body;
+  const { url } = req.body;
 
-  const SYSTEM_PROMPT = `Du bist ein Elite-Funnel-Analyst mit über 10 Jahren Erfahrung in Conversion-Optimierung für DACH-Coaches, Berater, Agenturen und Dienstleister im Hochpreissegment. Du analysierst Landing Pages und Funnels auf absolutem Profi-Niveau.
+  const SYSTEM_PROMPT = `Du bist ein Elite-Funnel-Analyst für DACH-Coaches, Berater und Agenturen.
 
-WICHTIG: Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt. Kein Markdown, keine Backticks, keine Erklärungen. Nur reines JSON.
+WICHTIG: Antworte NUR mit validem JSON. Keine Backticks, kein Markdown, keine Erklärungen.
 
-Struktur:
+Halte jeden Textwert KURZ: max 2 Sätze pro Feld.
+
+JSON-Struktur:
 {
-  "gesamtScore": <Zahl 1-100>,
-  "gesamtBewertung": "<prägnante Gesamteinschätzung in 2 Sätzen>",
-  "topProblem": "<das eine kritischste Problem in 1 Satz>",
-  "quickWin": "<die eine Maßnahme mit schnellstem und größtem Impact in 1 Satz>",
+  "gesamtScore": 65,
+  "gesamtBewertung": "Max 2 Sätze.",
+  "topProblem": "Max 1 Satz.",
+  "quickWin": "Max 1 Satz.",
   "sections": [
     {
       "id": "erstereindruck",
       "title": "Erster Eindruck",
       "subtitle": "Above the Fold",
       "icon": "👁",
-      "score": <1-10>,
-      "befund": "<konkreter Befund 2-3 Sätze>",
-      "problem": "<was konkret nicht funktioniert oder fehlt>",
-      "empfehlung": "<konkrete umsetzbare Empfehlung mit Textbeispielen>"
+      "score": 6,
+      "befund": "Max 2 Sätze.",
+      "problem": "Max 1 Satz.",
+      "empfehlung": "Max 2 Sätze."
     }
   ]
 }
 
-Exakt diese 12 Sections in dieser Reihenfolge:
+Genau 12 sections in dieser Reihenfolge:
 1. id "erstereindruck", title "Erster Eindruck", subtitle "Above the Fold", icon "👁"
 2. id "headline", title "Headline & Hook", subtitle "Aufmerksamkeit & Relevanz", icon "🎯"
 3. id "valueproposition", title "Value Proposition", subtitle "Nutzenversprechen", icon "💎"
@@ -43,12 +45,7 @@ Exakt diese 12 Sections in dieser Reihenfolge:
 11. id "technik", title "Technische Punkte", subtitle "Ladezeit & Performance", icon "⚙️"
 12. id "fazit", title "Prioritäten & Fazit", subtitle "Dein Aktionsplan", icon "📋"
 
-Analyseregeln:
-- Direkt, kritisch, konkret. Keine Floskeln.
-- Alles spezifisch auf den analysierten Funnel bezogen, nicht generisch.
-- Bei Empfehlungen: konkrete Formulierungen, alternative Headlines, CTA-Texte als Beispiele.
-- Score 1-4 = kritisch, 5-7 = ausbaufähig, 8-10 = gut.
-- Section "fazit" enthält die Top 3 Sofortmaßnahmen als konkreten Aktionsplan.`;
+Sei direkt und konkret. Score 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -59,23 +56,39 @@ Analyseregeln:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        max_tokens: 4000,
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content: pageContent || `URL: ${url}`,
-          },
-        ],
+        messages: [{ role: 'user', content: `Analysiere diesen Funnel: ${url}` }],
       }),
     });
 
     const data = await response.json();
-    const raw = data.content?.[0]?.text || '';
-    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+
+    if (!data.content || !data.content[0]) {
+      return res.status(500).json({ error: 'Keine Antwort von Claude erhalten' });
+    }
+
+    const raw = data.content[0].text.trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          parsed = JSON.parse(match[0]);
+        } catch {
+          return res.status(500).json({ error: 'JSON Parse Fehler' });
+        }
+      } else {
+        return res.status(500).json({ error: 'Kein JSON in Antwort gefunden' });
+      }
+    }
+
     res.status(200).json(parsed);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || 'Unbekannter Fehler' });
   }
 }
