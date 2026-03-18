@@ -1,11 +1,10 @@
 // FUNNEL RÖNTGEN — api/analyze.js
-// Edge Runtime: 30s wall-clock limit
-// Timing: Jina läuft im Browser (kein Timeout hier), Claude braucht ~18s für 1800 tokens → passt
+// Streaming-Lösung: Anthropic's SSE-Stream wird direkt an den Browser weitergeleitet.
+// Kein Timeout-Problem mehr — Daten fließen kontinuierlich, Vercel wartet nicht auf das Ende.
 
 export const config = { runtime: "edge" };
 
 export default async function handler(req) {
-  // CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 200,
@@ -26,24 +25,19 @@ export default async function handler(req) {
     return json({ error: "ANTHROPIC_API_KEY nicht konfiguriert" }, 500);
   }
 
-  // Body einlesen
   let body;
   try {
     body = await req.json();
   } catch {
-    return json({ error: "Ungültiger Request-Body (kein JSON)" }, 400);
+    return json({ error: "Ungültiger Request-Body" }, 400);
   }
 
   const { pageContent, url } = body || {};
 
   if (!pageContent || pageContent.trim().length < 50) {
-    return json(
-      { error: "Kein Seiteninhalt empfangen — Jina hat nichts zurückgegeben" },
-      400
-    );
+    return json({ error: "Kein Seiteninhalt empfangen" }, 400);
   }
 
-  // Auf 6000 Zeichen kürzen (= ~1500 Tokens) damit der Prompt überschaubar bleibt
   const content = pageContent.slice(0, 6000);
 
   const prompt = `Du bist ein Conversion-Rate-Optimierungs-Experte. Analysiere diese Landing Page / Funnel anhand des unten stehenden Seiteninhalts.
@@ -88,70 +82,43 @@ Analysiere genau diese 12 Kategorien in dieser Reihenfolge:
 
 Status-Regel: good = Score 70–100, warning = 40–69, critical = 0–39`;
 
-  try {
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
+  // Anthropic mit stream: true aufrufen
+  const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1800,
+      stream: true,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  // Bei Anthropic-Fehler: normale JSON-Fehlerantwort
+  if (!anthropicRes.ok) {
+    const errText = await anthropicRes.text();
+    return json(
+      {
+        error: `Anthropic API Fehler: ${anthropicRes.status}`,
+        details: errText.slice(0, 400),
       },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1800,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-
-    if (!anthropicRes.ok) {
-      const errText = await anthropicRes.text();
-      return json(
-        {
-          error: `Anthropic API Fehler: ${anthropicRes.status}`,
-          details: errText.slice(0, 400),
-        },
-        500
-      );
-    }
-
-    const data = await anthropicRes.json();
-    const rawText = data?.content?.[0]?.text || "";
-
-    if (!rawText) {
-      return json({ error: "Leere Antwort von Claude erhalten" }, 500);
-    }
-
-    // JSON aus der Antwort extrahieren (robust gegen führenden/nachfolgenden Text)
-    let report;
-    try {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("Kein JSON-Objekt in der Antwort gefunden");
-      report = JSON.parse(match[0]);
-    } catch (parseErr) {
-      return json(
-        {
-          error: "JSON-Parsing fehlgeschlagen",
-          rawPreview: rawText.slice(0, 500),
-        },
-        500
-      );
-    }
-
-    // Minimale Validierung
-    if (!report.categories || !Array.isArray(report.categories)) {
-      return json(
-        {
-          error: "Ungültige Report-Struktur: 'categories' fehlt",
-          rawPreview: rawText.slice(0, 500),
-        },
-        500
-      );
-    }
-
-    return json(report, 200);
-  } catch (err) {
-    return json({ error: err.message || "Unbekannter Server-Fehler" }, 500);
+      500
+    );
   }
+
+  // SSE-Stream direkt an den Browser weiterleiten — kein Puffern, kein Timeout
+  return new Response(anthropicRes.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
 function json(data, status = 200) {
