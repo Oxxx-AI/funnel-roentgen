@@ -2,51 +2,6 @@ import { useState } from "react";
 
 const ACCENT = "#E84C6A";
 
-const SYSTEM_PROMPT = `Du bist ein Elite-Funnel-Analyst mit über 10 Jahren Erfahrung in Conversion-Optimierung für DACH-Coaches, Berater, Agenturen und Dienstleister im Hochpreissegment. Du analysierst Landing Pages und Funnels auf absolutem Profi-Niveau.
-
-WICHTIG: Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt. Kein Markdown, keine Backticks, keine Erklärungen. Nur reines JSON.
-
-Struktur:
-{
-  "gesamtScore": <Zahl 1-100>,
-  "gesamtBewertung": "<prägnante Gesamteinschätzung in 2 Sätzen>",
-  "topProblem": "<das eine kritischste Problem in 1 Satz>",
-  "quickWin": "<die eine Maßnahme mit schnellstem und größtem Impact in 1 Satz>",
-  "sections": [
-    {
-      "id": "erstereindruck",
-      "title": "Erster Eindruck",
-      "subtitle": "Above the Fold",
-      "icon": "👁",
-      "score": <1-10>,
-      "befund": "<konkreter Befund 2-3 Sätze, was tatsächlich auf der Seite zu sehen/lesen ist>",
-      "problem": "<was konkret nicht funktioniert oder fehlt>",
-      "empfehlung": "<konkrete umsetzbare Empfehlung mit Textbeispielen wenn möglich>"
-    }
-  ]
-}
-
-Exakt diese 12 Sections in dieser Reihenfolge:
-1. id "erstereindruck", title "Erster Eindruck", subtitle "Above the Fold", icon "👁"
-2. id "headline", title "Headline & Hook", subtitle "Aufmerksamkeit & Relevanz", icon "🎯"
-3. id "valueproposition", title "Value Proposition", subtitle "Nutzenversprechen", icon "💎"
-4. id "zielgruppe", title "Zielgruppen-Fit", subtitle "Ansprache & Relevanz", icon "👥"
-5. id "socialproof", title "Social Proof", subtitle "Vertrauen & Glaubwürdigkeit", icon "⭐"
-6. id "cta", title "Call-to-Action", subtitle "Aufforderung & Klarheit", icon "🔴"
-7. id "copy", title "Copy & Sprache", subtitle "Überzeugungskraft", icon "✍️"
-8. id "einwandbehandlung", title "Einwandbehandlung", subtitle "Bedenken & Widerstände", icon "🛡"
-9. id "conversionkiller", title "Conversion-Killer", subtitle "Ablenkungen & Fehler", icon "⚠️"
-10. id "mobile", title "Mobile Experience", subtitle "Smartphone-Optimierung", icon "📱"
-11. id "technik", title "Technische Punkte", subtitle "Ladezeit & Performance", icon "⚙️"
-12. id "fazit", title "Prioritäten & Fazit", subtitle "Dein Aktionsplan", icon "📋"
-
-Analyseregeln:
-- Direkt, kritisch, konkret. Keine Floskeln.
-- Alles spezifisch auf den analysierten Funnel bezogen, nicht generisch.
-- Bei Empfehlungen: konkrete Formulierungen, alternative Headlines, CTA-Texte als Beispiele liefern.
-- Score 1-4 = kritisch, 5-7 = ausbaufähig, 8-10 = gut.
-- Section "fazit" enthält die Top 3 Sofortmaßnahmen als konkreten Aktionsplan.`;
-
 function ScoreRing({ score, size = 88 }) {
   const r = size / 2 - 9;
   const circ = 2 * Math.PI * r;
@@ -111,37 +66,15 @@ export default function FunnelRoentgen() {
     const iv = setInterval(() => setScanStep(s => Math.min(s + 1, steps.length - 1)), 2200);
 
     try {
-      let pageContent = `URL: ${url}`;
-      try {
-        const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, {
-          signal: AbortSignal.timeout(9000)
-        });
-        if (r.ok) {
-          const d = await r.json();
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(d.contents, "text/html");
-          ["script","style","noscript","svg","nav","footer"].forEach(t =>
-            doc.querySelectorAll(t).forEach(el => el.remove()));
-          const txt = doc.body?.innerText?.replace(/\s+/g, " ").trim() || "";
-          if (txt.length > 300) pageContent = `URL: ${url}\n\nSeiteninhalt:\n${txt.substring(0, 13000)}`;
-        }
-      } catch (_) {}
-
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: pageContent }],
-        }),
+        body: JSON.stringify({ url }),
       });
 
-      const data = await res.json();
       clearInterval(iv);
-      const raw = data.content?.[0]?.text || "";
-      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      const parsed = await res.json();
+      if (parsed.error) throw new Error(parsed.error);
       setReport(parsed);
       setPhase("report");
     } catch (e) {
@@ -159,7 +92,6 @@ export default function FunnelRoentgen() {
   if (phase === "input") return (
     <div style={{ ...base, minHeight: 480, display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
-
       <div style={{
         width: "100%", maxWidth: 560,
         background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)",
@@ -177,7 +109,6 @@ export default function FunnelRoentgen() {
         <p style={{ margin: "0 0 2rem", fontSize: 15, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
           URL eingeben. 60 Sekunden warten. 12 kritische Conversion-Faktoren analysiert, bewertet, konkrete Empfehlungen geliefert.
         </p>
-
         <input
           value={url}
           onChange={e => setUrl(e.target.value)}
@@ -198,7 +129,6 @@ export default function FunnelRoentgen() {
           Funnel jetzt röntgen →
         </button>
       </div>
-
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
         {["12 Analyse-Bereiche", "KI-gestützte Diagnose", "Konkrete Empfehlungen"].map(t => (
           <div key={t} style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "flex", gap: 6, alignItems: "center" }}>
@@ -231,9 +161,7 @@ export default function FunnelRoentgen() {
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🔬</div>
         </div>
         <div style={{ fontSize: 11, letterSpacing: 3, color: ACCENT, marginBottom: 10, fontWeight: 700 }}>ANALYSE LÄUFT</div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 8 }}>
-          {steps[scanStep]}
-        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{steps[scanStep]}</div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: "1.5rem", wordBreak: "break-all" }}>
           {url.length > 55 ? url.substring(0, 55) + "..." : url}
         </div>
@@ -270,12 +198,9 @@ export default function FunnelRoentgen() {
 
   return (
     <div style={{ ...base, maxWidth: 700, margin: "0 auto", padding: "1.5rem 1rem" }}>
-
-      {/* HEADER */}
       <div style={{
         background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)",
-        borderRadius: 16, padding: "1.75rem 1.5rem 1.5rem",
-        marginBottom: "1.25rem"
+        borderRadius: 16, padding: "1.75rem 1.5rem 1.5rem", marginBottom: "1.25rem"
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 200 }}>
@@ -292,7 +217,6 @@ export default function FunnelRoentgen() {
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", letterSpacing: 1.5, marginTop: 4 }}>GESAMT-SCORE</div>
           </div>
         </div>
-
         <div style={{
           marginTop: "1.25rem", padding: "1rem",
           background: "rgba(255,255,255,0.05)", borderRadius: 10,
@@ -303,7 +227,6 @@ export default function FunnelRoentgen() {
         </div>
       </div>
 
-      {/* QUICK FACTS */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: "1.25rem" }}>
         {[
           { label: "Kritischstes Problem", value: report.topProblem, accent: ACCENT, icon: "🔴" },
@@ -322,11 +245,9 @@ export default function FunnelRoentgen() {
         ))}
       </div>
 
-      {/* SCORE OVERVIEW */}
       <div style={{
         background: "var(--color-background-secondary)", borderRadius: 10,
-        padding: "1rem 1.25rem", border: "0.5px solid var(--color-border-tertiary)",
-        marginBottom: "1.25rem"
+        padding: "1rem 1.25rem", border: "0.5px solid var(--color-border-tertiary)", marginBottom: "1.25rem"
       }}>
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "var(--color-text-secondary)", marginBottom: 12 }}>
           SCHNELLÜBERSICHT
@@ -335,10 +256,8 @@ export default function FunnelRoentgen() {
           {report.sections?.map(s => {
             const c = s.score >= 8 ? "#22c55e" : s.score >= 5 ? "#f59e0b" : ACCENT;
             return (
-              <div key={s.id}
-                onClick={() => setOpen(open === s.id ? null : s.id)}
-                style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
-                  padding: "4px 0", borderRadius: 6 }}>
+              <div key={s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
+                style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0", borderRadius: 6 }}>
                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: c, flexShrink: 0 }} />
                 <span style={{ fontSize: 12, color: "var(--color-text-primary)", flex: 1, lineHeight: 1.3 }}>{s.title}</span>
                 <span style={{ fontSize: 12, fontWeight: 800, color: c }}>{s.score}/10</span>
@@ -348,7 +267,6 @@ export default function FunnelRoentgen() {
         </div>
       </div>
 
-      {/* SECTIONS */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: "1.5rem" }}>
         {report.sections?.map((s) => {
           const c = s.score >= 8 ? "#22c55e" : s.score >= 5 ? "#f59e0b" : ACCENT;
@@ -382,7 +300,6 @@ export default function FunnelRoentgen() {
                   }}>›</span>
                 </div>
               </div>
-
               {isOpen && (
                 <div style={{ padding: "0 1rem 1rem" }}>
                   <ProgressBar score={s.score} />
@@ -415,7 +332,6 @@ export default function FunnelRoentgen() {
         })}
       </div>
 
-      {/* ACTIONS */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button onClick={() => { setPhase("input"); setReport(null); setOpen(null); }} style={{
           flex: 1, minWidth: 130, padding: "13px",
