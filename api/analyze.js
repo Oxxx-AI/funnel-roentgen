@@ -1,21 +1,17 @@
-export const config = { runtime: 'edge' };
+export const config = { maxDuration: 55 };
 
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { url } = await req.json();
+  const { url } = req.body;
 
-  // Jina AI Reader rendert JavaScript-Seiten vollständig (Perspective, ClickFunnels, etc.)
   let pageContent = '';
   try {
     const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
-      headers: {
-        'Accept': 'text/plain',
-        'X-Return-Format': 'text',
-      },
-      signal: AbortSignal.timeout(20000),
+      headers: { 'Accept': 'text/plain', 'X-Return-Format': 'text' },
+      signal: AbortSignal.timeout(25000),
     });
     const text = await jinaRes.text();
     if (text && text.length > 200) {
@@ -27,9 +23,9 @@ export default async function handler(req) {
 
   const userMessage = pageContent.length > 200
     ? `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt:\n${pageContent}`
-    : `Analysiere diesen Funnel.\nURL: ${url}\n\nDer Seiteninhalt konnte nicht geladen werden. Weise in jeder Section darauf hin.`;
+    : `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt konnte nicht geladen werden. Weise in jeder Section darauf hin.`;
 
-  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen im Hochpreissegment.
+  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen.
 
 REGEL 1: Antworte NUR mit validem JSON. Keine Backticks, kein Text davor oder danach.
 REGEL 2: Analysiere ausschließlich was im Seiteninhalt steht. Niemals erfinden.
@@ -100,14 +96,11 @@ Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
     }
 
     if (!parsed) {
-      return new Response(JSON.stringify({ error: 'Bitte nochmal versuchen' }), { status: 500 });
+      return res.status(500).json({ error: 'Bitte nochmal versuchen' });
     }
 
-    return new Response(JSON.stringify(parsed), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(200).json(parsed);
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message || 'Fehler' }), { status: 500 });
+    return res.status(500).json({ error: err.message || 'Fehler' });
   }
 }
