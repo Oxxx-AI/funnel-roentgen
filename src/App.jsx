@@ -1,7 +1,8 @@
 // FUNNEL RÖNTGEN — src/App.jsx
 // Architektur:
 // 1. Jina läuft im Browser (kein Vercel-Timeout)
-// 2. /api/analyze bekommt den Text und ruft nur Claude auf (~18s → unter 30s Edge Limit)
+// 2. /api/analyze streamt die Anthropic-Antwort als SSE
+// 3. Browser liest den Stream Token für Token, akkumuliert JSON, parst am Ende
 
 import { useState } from "react";
 
@@ -67,17 +68,12 @@ function CategoryCard({ cat }) {
       overflow: "hidden",
       transition: "border-color 0.2s",
     }}>
-      {/* Header row */}
       <div
         onClick={() => setOpen(!open)}
-        style={{
-          padding: "14px 16px", cursor: "pointer",
-          display: "flex", alignItems: "center", gap: 12,
-        }}
+        style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
       >
         <div style={{
-          width: 38, height: 38, borderRadius: "50%",
-          background: "#1e293b",
+          width: 38, height: 38, borderRadius: "50%", background: "#1e293b",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 17, flexShrink: 0,
         }}>
@@ -101,7 +97,6 @@ function CategoryCard({ cat }) {
         <div style={{ color: "#475569", fontSize: 14, marginLeft: 4 }}>{open ? "▲" : "▼"}</div>
       </div>
 
-      {/* Expanded content */}
       {open && (
         <div style={{ borderTop: "1px solid #1e293b", padding: "16px" }}>
           <div style={{ display: "grid", gap: 12 }}>
@@ -118,7 +113,6 @@ function CategoryCard({ cat }) {
               </div>
             ))}
           </div>
-          {/* Score bar */}
           <div style={{ marginTop: 14, height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${cat.score}%`, background: color, borderRadius: 2 }} />
           </div>
@@ -126,6 +120,40 @@ function CategoryCard({ cat }) {
       )}
     </div>
   );
+}
+
+// ── SSE Stream lesen und JSON akkumulieren ───────────────────────────────────
+async function readStreamingReport(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = "";
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        // Anthropic SSE: content_block_delta enthält die Text-Tokens
+        if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+          accumulated += parsed.delta.text;
+        }
+      } catch {
+        // Malformed SSE-Event ignorieren
+      }
+    }
+  }
+
+  return accumulated;
 }
 
 // ── Main App ─────────────────────────────────────────────────────────────────
@@ -137,29 +165,24 @@ export default function App() {
   const [statusMsg, setStatusMsg] = useState("");
 
   async function runAudit() {
-    const cleanUrl = url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`;
     if (!url.trim()) return;
+    const cleanUrl = url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`;
 
     setStep("fetching");
     setError("");
     setReport(null);
     setStatusMsg("Seite wird geladen (Jina Reader rendert JavaScript)...");
 
-    // ── Schritt 1: Jina im Browser aufrufen ────────────────────────────────
+    // ── Schritt 1: Jina im Browser ─────────────────────────────────────────
     let pageContent = "";
     try {
       const jinaRes = await fetch(`https://r.jina.ai/${cleanUrl}`, {
         headers: { Accept: "text/plain" },
       });
-
-      if (!jinaRes.ok) {
-        throw new Error(`HTTP ${jinaRes.status} — Seite nicht erreichbar`);
-      }
-
+      if (!jinaRes.ok) throw new Error(`HTTP ${jinaRes.status}`);
       pageContent = await jinaRes.text();
-
       if (!pageContent || pageContent.trim().length < 50) {
-        throw new Error("Jina hat keinen Inhalt zurückgegeben (Seite möglicherweise leer oder geblockt)");
+        throw new Error("Seite ist leer oder wurde geblockt");
       }
     } catch (err) {
       setStep("error");
@@ -167,9 +190,9 @@ export default function App() {
       return;
     }
 
-    // ── Schritt 2: Analyse-API aufrufen ────────────────────────────────────
+    // ── Schritt 2: Streaming-Analyse ───────────────────────────────────────
     setStep("analyzing");
-    setStatusMsg("KI analysiert deinen Funnel... (ca. 20 Sekunden)");
+    setStatusMsg("KI analysiert deinen Funnel... (Antwort wird gestreamt)");
 
     try {
       const res = await fetch("/api/analyze", {
@@ -178,24 +201,35 @@ export default function App() {
         body: JSON.stringify({ url: cleanUrl, pageContent }),
       });
 
-      // Erst als Text lesen, dann parsen — sicher gegen HTML-Fehlerseiten
-      const rawText = await res.text();
+      // Prüfen ob die Antwort ein SSE-Stream oder eine JSON-Fehlerantwort ist
+      const contentType = res.headers.get("Content-Type") || "";
 
-      let data;
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        throw new Error(
-          `Server hat ungültige Antwort zurückgegeben: ${rawText.slice(0, 200)}`
-        );
-      }
-
-      if (!res.ok) {
+      if (!res.ok || !contentType.includes("text/event-stream")) {
+        // Fehler-JSON lesen
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = { error: text.slice(0, 300) }; }
         throw new Error(data.error || `Server-Fehler ${res.status}`);
       }
 
+      // Stream lesen
+      const rawText = await readStreamingReport(res);
+
+      if (!rawText) throw new Error("Leere Antwort vom KI-Modell erhalten");
+
+      // JSON aus dem akkumulierten Text extrahieren
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Kein JSON in der KI-Antwort gefunden");
+
+      let data;
+      try {
+        data = JSON.parse(match[0]);
+      } catch {
+        throw new Error("JSON konnte nicht geparst werden");
+      }
+
       if (!data.categories || !Array.isArray(data.categories)) {
-        throw new Error("Report-Struktur ungültig — 'categories' fehlt");
+        throw new Error("Report-Struktur ungültig");
       }
 
       setReport(data);
@@ -218,24 +252,12 @@ export default function App() {
         @keyframes spin { to { transform: rotate(360deg); } }
         * { box-sizing: border-box; }
         input::placeholder { color: #334155; }
-        @media print {
-          button { display: none !important; }
-          .no-print { display: none !important; }
-        }
+        @media print { button { display: none !important; } .no-print { display: none !important; } }
       `}</style>
 
-      {/* ── Header ── */}
-      <div style={{
-        borderBottom: "1px solid #0f172a",
-        padding: "16px 24px",
-        display: "flex", alignItems: "center", gap: 12,
-      }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 8,
-          background: "#EB3255",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 18,
-        }}>
+      {/* Header */}
+      <div style={{ borderBottom: "1px solid #0f172a", padding: "16px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: "#EB3255", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
           🔬
         </div>
         <div>
@@ -248,42 +270,29 @@ export default function App() {
 
       <div style={{ maxWidth: 700, margin: "0 auto", padding: "40px 20px" }}>
 
-        {/* ── Hero (nur bei idle) ── */}
+        {/* Hero + Input */}
         {(step === "idle" || step === "error") && (
           <>
             <div style={{ textAlign: "center", marginBottom: 40 }}>
               <div style={{
-                display: "inline-block",
-                background: "#EB325520", color: "#EB3255",
+                display: "inline-block", background: "#EB325520", color: "#EB3255",
                 fontSize: 11, fontWeight: 700, letterSpacing: 2,
                 padding: "6px 16px", borderRadius: 100, marginBottom: 20,
               }}>
                 KI-POWERED AUDIT
               </div>
-              <h1 style={{
-                fontSize: "clamp(26px, 5vw, 42px)", fontWeight: 900,
-                lineHeight: 1.1, marginBottom: 16, letterSpacing: -1,
-              }}>
+              <h1 style={{ fontSize: "clamp(26px, 5vw, 42px)", fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
                 Dein Funnel unter dem{" "}
                 <span style={{ color: "#EB3255" }}>Röntgengerät</span>
               </h1>
-              <p style={{
-                color: "#64748b", fontSize: 16, lineHeight: 1.7,
-                maxWidth: 460, margin: "0 auto",
-              }}>
+              <p style={{ color: "#64748b", fontSize: 16, lineHeight: 1.7, maxWidth: 460, margin: "0 auto" }}>
                 URL eingeben. In ~60 Sekunden bekommst du einen vollständigen
                 Audit mit 12 Kategorien und konkreten Handlungsempfehlungen.
               </p>
             </div>
 
-            {/* Input */}
             <div style={{ maxWidth: 560, margin: "0 auto" }}>
-              <div style={{
-                display: "flex",
-                border: "1px solid #1e293b",
-                borderRadius: 12, overflow: "hidden",
-                background: "#0f172a",
-              }}>
+              <div style={{ display: "flex", border: "1px solid #1e293b", borderRadius: 12, overflow: "hidden", background: "#0f172a" }}>
                 <input
                   type="text"
                   value={url}
@@ -291,23 +300,19 @@ export default function App() {
                   onKeyDown={(e) => e.key === "Enter" && runAudit()}
                   placeholder="https://dein-funnel.de/landing"
                   style={{
-                    flex: 1, background: "transparent",
-                    border: "none", outline: "none",
-                    padding: "16px 20px", fontSize: 15,
-                    color: "#f1f5f9", fontFamily: "inherit",
+                    flex: 1, background: "transparent", border: "none", outline: "none",
+                    padding: "16px 20px", fontSize: 15, color: "#f1f5f9", fontFamily: "inherit",
                   }}
                 />
                 <button
                   onClick={runAudit}
                   disabled={!url.trim()}
                   style={{
-                    background: "#EB3255", color: "white",
-                    border: "none", padding: "16px 28px",
-                    fontSize: 14, fontWeight: 700,
+                    background: "#EB3255", color: "white", border: "none",
+                    padding: "16px 28px", fontSize: 14, fontWeight: 700,
                     cursor: url.trim() ? "pointer" : "not-allowed",
                     opacity: url.trim() ? 1 : 0.5,
-                    letterSpacing: 0.5, fontFamily: "inherit",
-                    whiteSpace: "nowrap",
+                    letterSpacing: 0.5, fontFamily: "inherit", whiteSpace: "nowrap",
                   }}
                 >
                   Röntgen →
@@ -316,10 +321,8 @@ export default function App() {
 
               {step === "error" && (
                 <div style={{
-                  marginTop: 16, background: "#1e0a0a",
-                  border: "1px solid #7f1d1d",
-                  borderRadius: 8, padding: "12px 16px",
-                  color: "#fca5a5", fontSize: 13, lineHeight: 1.6,
+                  marginTop: 16, background: "#1e0a0a", border: "1px solid #7f1d1d",
+                  borderRadius: 8, padding: "12px 16px", color: "#fca5a5", fontSize: 13, lineHeight: 1.6,
                 }}>
                   ⚠️ {error}
                 </div>
@@ -332,15 +335,13 @@ export default function App() {
           </>
         )}
 
-        {/* ── Loading ── */}
+        {/* Loading */}
         {(step === "fetching" || step === "analyzing") && (
           <div style={{ textAlign: "center", padding: "80px 20px" }}>
             <div style={{
               width: 56, height: 56, margin: "0 auto 24px",
-              border: "3px solid #1e293b",
-              borderTop: "3px solid #EB3255",
-              borderRadius: "50%",
-              animation: "spin 1s linear infinite",
+              border: "3px solid #1e293b", borderTop: "3px solid #EB3255",
+              borderRadius: "50%", animation: "spin 1s linear infinite",
             }} />
             <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 10 }}>
               {step === "fetching" ? "Seite wird geladen..." : "KI analysiert deinen Funnel..."}
@@ -349,33 +350,29 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Report ── */}
+        {/* Report */}
         {step === "done" && report && (
           <div>
             {/* Score Header */}
             <div style={{
               background: "#0f172a", border: "1px solid #1e293b",
-              borderRadius: 16, padding: "28px 32px",
-              marginBottom: 20, display: "flex",
-              alignItems: "center", gap: 28, flexWrap: "wrap",
+              borderRadius: 16, padding: "28px 32px", marginBottom: 20,
+              display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap",
             }}>
               <ScoreRing score={report.overallScore} />
               <div style={{ flex: 1, minWidth: 200 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", letterSpacing: 2, marginBottom: 8 }}>
                   GESAMT-AUDIT · {report.url}
                 </div>
-                <div style={{ fontSize: 15, color: "#94a3b8", lineHeight: 1.7 }}>
-                  {report.summary}
-                </div>
+                <div style={{ fontSize: 15, color: "#94a3b8", lineHeight: 1.7 }}>{report.summary}</div>
                 <button
                   onClick={() => window.print()}
                   className="no-print"
                   style={{
-                    marginTop: 16, background: "transparent",
-                    border: "1px solid #EB3255", color: "#EB3255",
-                    padding: "8px 20px", borderRadius: 6,
-                    fontSize: 12, fontWeight: 700,
-                    cursor: "pointer", letterSpacing: 0.5, fontFamily: "inherit",
+                    marginTop: 16, background: "transparent", border: "1px solid #EB3255",
+                    color: "#EB3255", padding: "8px 20px", borderRadius: 6,
+                    fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    letterSpacing: 0.5, fontFamily: "inherit",
                   }}
                 >
                   PDF EXPORTIEREN
@@ -384,10 +381,7 @@ export default function App() {
             </div>
 
             {/* Score Distribution */}
-            <div style={{
-              display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-              gap: 8, marginBottom: 20,
-            }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 20 }}>
               {[
                 { label: "Gut (70+)", count: report.categories.filter((c) => c.score >= 70).length, color: "#22c55e" },
                 { label: "Verbesserbar", count: report.categories.filter((c) => c.score >= 40 && c.score < 70).length, color: "#f59e0b" },
@@ -405,9 +399,7 @@ export default function App() {
 
             {/* Categories */}
             <div>
-              {report.categories.map((cat, i) => (
-                <CategoryCard key={i} cat={cat} />
-              ))}
+              {report.categories.map((cat, i) => <CategoryCard key={i} cat={cat} />)}
             </div>
 
             {/* New Audit */}
@@ -415,9 +407,8 @@ export default function App() {
               <button
                 onClick={() => { setStep("idle"); setReport(null); setUrl(""); }}
                 style={{
-                  background: "#EB3255", color: "white",
-                  border: "none", padding: "14px 36px",
-                  borderRadius: 8, fontSize: 14, fontWeight: 700,
+                  background: "#EB3255", color: "white", border: "none",
+                  padding: "14px 36px", borderRadius: 8, fontSize: 14, fontWeight: 700,
                   cursor: "pointer", letterSpacing: 0.5, fontFamily: "inherit",
                 }}
               >
