@@ -84,6 +84,41 @@ function CategoryCard({ cat }) {
   );
 }
 
+// JSON robust extrahieren — lokal getestet gegen alle Fehlerfälle
+function extractJsonRobust(rawText) {
+  if (!rawText || !rawText.trim()) return null;
+
+  // Markdown Code-Blocks entfernen
+  let cleaned = rawText
+    .replace(/```json\s*/gi, "")
+    .replace(/```\s*/g, "")
+    .trim();
+
+  // JSON-Grenzen finden
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+
+  const jsonStr = cleaned.slice(start, end + 1);
+
+  // Direkt parsen
+  try {
+    const result = JSON.parse(jsonStr);
+    if (result && Array.isArray(result.categories)) return result;
+    return null;
+  } catch {
+    // Fallback: Steuerzeichen bereinigen
+    try {
+      const sanitized = jsonStr.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+      const result = JSON.parse(sanitized);
+      if (result && Array.isArray(result.categories)) return result;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 // SSE-Stream lesen und Text akkumulieren (lokal getestet, funktioniert)
 async function readStreamingReport(response) {
   const reader = response.body.getReader();
@@ -177,15 +212,10 @@ export default function App() {
         throw new Error("KI hat keine Antwort zurückgegeben");
       }
 
-      // JSON aus akkumuliertem Text extrahieren
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("Kein JSON in der KI-Antwort gefunden");
-
-      let data;
-      try {
-        data = JSON.parse(match[0]);
-      } catch {
-        throw new Error("JSON-Parsing fehlgeschlagen");
+      // JSON robust extrahieren (getestet gegen alle Fehlerfälle)
+      const data = extractJsonRobust(rawText);
+      if (!data) {
+        throw new Error("KI-Antwort konnte nicht verarbeitet werden. Bitte nochmal versuchen.");
       }
 
       if (!data.categories || !Array.isArray(data.categories)) {
