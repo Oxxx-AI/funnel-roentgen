@@ -1,6 +1,5 @@
 // FUNNEL RÖNTGEN — api/analyze.js
-// Streaming-Lösung: Anthropic's SSE-Stream wird direkt an den Browser weitergeleitet.
-// Kein Timeout-Problem mehr — Daten fließen kontinuierlich, Vercel wartet nicht auf das Ende.
+// Edge Runtime, Streaming, gehärteter Prompt (keine direkten Zitate → kein JSON-Break)
 
 export const config = { runtime: "edge" };
 
@@ -40,33 +39,41 @@ export default async function handler(req) {
 
   const content = pageContent.slice(0, 6000);
 
-  const prompt = `Du bist ein Conversion-Rate-Optimierungs-Experte. Analysiere diese Landing Page / Funnel anhand des unten stehenden Seiteninhalts.
+  // WICHTIG: Prompt verbietet direkte Zitate → verhindert unescapte " in JSON-Strings
+  const prompt = `Du bist ein Conversion-Rate-Optimierungs-Experte. Analysiere diese Landing Page.
 
 URL: ${url}
 
 SEITENINHALT:
 ${content}
 
-WICHTIG: Basiere ALLES ausschließlich auf dem obigen Seiteninhalt. Wenn Social Proof vorhanden ist, erkenne ihn an. Wenn eine Headline vorhanden ist, zitiere sie. Halluziniere nichts.
+REGELN (sehr wichtig):
+- Basiere ALLES auf dem Seiteninhalt oben
+- Schreibe alle Textwerte in eigenen Worten — zitiere NIEMALS direkt aus dem Seiteninhalt
+- Verwende KEINE Anführungszeichen innerhalb von Textwerten
+- Verwende KEINE Sonderzeichen wie Gedankenstriche oder Apostrophe in Textwerten
+- Halte alle Textwerte kurz (max 15 Wörter pro Feld)
 
-Antworte ausschließlich mit folgendem JSON-Objekt — kein Text davor, kein Text danach, kein Markdown:
+AUSGABE: Antworte NUR mit diesem JSON. Kein Text davor, kein Text danach, kein Markdown, keine Codeblocks.
+Erster Buchstabe deiner Antwort muss { sein. Letzter Buchstabe muss } sein.
+
 {
   "url": "${url}",
   "overallScore": <Zahl 0-100>,
-  "summary": "<2 konkrete Sätze: Was macht die Seite gut und was ist die größte Schwäche>",
+  "summary": "<max 20 Wörter, eigene Formulierung, keine Anführungszeichen>",
   "categories": [
     {
       "name": "<Kategoriename>",
       "score": <Zahl 0-100>,
       "status": "<good|warning|critical>",
-      "finding": "<Was konkret vorhanden ist — 1 Satz, basierend auf dem Seiteninhalt>",
-      "problem": "<Was fehlt oder schwach ist — 1 Satz>",
-      "recommendation": "<Konkrete Maßnahme zur Verbesserung — 1 Satz>"
+      "finding": "<Was vorhanden ist, eigene Worte, max 12 Wörter>",
+      "problem": "<Was fehlt, eigene Worte, max 12 Wörter>",
+      "recommendation": "<Verbesserungsmaßnahme, eigene Worte, max 12 Wörter>"
     }
   ]
 }
 
-Analysiere genau diese 12 Kategorien in dieser Reihenfolge:
+Analysiere exakt diese 12 Kategorien:
 1. Headline & Hook
 2. Subheadline & Kontext
 3. Problem-Agitation
@@ -80,9 +87,8 @@ Analysiere genau diese 12 Kategorien in dieser Reihenfolge:
 11. Mobile-Optimierung
 12. Technische Performance
 
-Status-Regel: good = Score 70–100, warning = 40–69, critical = 0–39`;
+Status-Regel: good = 70-100, warning = 40-69, critical = 0-39`;
 
-  // Anthropic mit stream: true aufrufen
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -98,19 +104,15 @@ Status-Regel: good = Score 70–100, warning = 40–69, critical = 0–39`;
     }),
   });
 
-  // Bei Anthropic-Fehler: normale JSON-Fehlerantwort
   if (!anthropicRes.ok) {
     const errText = await anthropicRes.text();
     return json(
-      {
-        error: `Anthropic API Fehler: ${anthropicRes.status}`,
-        details: errText.slice(0, 400),
-      },
+      { error: `Anthropic API Fehler: ${anthropicRes.status}`, details: errText.slice(0, 300) },
       500
     );
   }
 
-  // SSE-Stream direkt an den Browser weiterleiten — kein Puffern, kein Timeout
+  // SSE-Stream direkt zum Browser weiterleiten
   return new Response(anthropicRes.body, {
     status: 200,
     headers: {
