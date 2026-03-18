@@ -1,276 +1,431 @@
+// FUNNEL RÖNTGEN — src/App.jsx
+// Architektur:
+// 1. Jina läuft im Browser (kein Vercel-Timeout)
+// 2. /api/analyze bekommt den Text und ruft nur Claude auf (~18s → unter 30s Edge Limit)
+
 import { useState } from "react";
 
-const ACCENT = "#E84C6A";
+const ICONS = {
+  "Headline & Hook": "🎯",
+  "Subheadline & Kontext": "📝",
+  "Problem-Agitation": "⚡",
+  "Nutzenversprechen (Value Proposition)": "💎",
+  "Social Proof & Testimonials": "⭐",
+  "Trust-Signale & Glaubwürdigkeit": "🛡️",
+  "Call-to-Action (CTA)": "🔥",
+  "Angebot & Preistransparenz": "💰",
+  "Einwandbehandlung & FAQ": "❓",
+  "Visuelles Design & Layout": "🎨",
+  "Mobile-Optimierung": "📱",
+  "Technische Performance": "⚙️",
+};
 
-function ScoreRing({ score, size = 88 }) {
-  const r = size / 2 - 9;
+const STATUS_COLOR = { good: "#22c55e", warning: "#f59e0b", critical: "#ef4444" };
+const STATUS_LABEL = { good: "GUT", warning: "VERBESSERBAR", critical: "KRITISCH" };
+
+// ── Score Ring ──────────────────────────────────────────────────────────────
+function ScoreRing({ score }) {
+  const r = 52;
   const circ = 2 * Math.PI * r;
-  const pct = Math.min(score, 100) / 100;
-  const color = score >= 70 ? "#22c55e" : score >= 50 ? "#f59e0b" : ACCENT;
+  const offset = circ - (score / 100) * circ;
+  const color = score >= 70 ? "#22c55e" : score >= 40 ? "#f59e0b" : "#ef4444";
   return (
-    <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="7"/>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth="7"
-        strokeDasharray={`${circ*pct} ${circ}`} strokeLinecap="round"/>
-      <text x={size/2} y={size/2+7} textAnchor="middle" fill="white"
-        fontSize="20" fontWeight="800" style={{ transform: `rotate(90deg)`, transformOrigin: `${size/2}px ${size/2}px` }}>
-        {score}
-      </text>
-    </svg>
-  );
-}
-
-function ScoreBadge({ score }) {
-  const color = score >= 8 ? "#22c55e" : score >= 5 ? "#f59e0b" : ACCENT;
-  return (
-    <div style={{ fontSize: 12, fontWeight: 700, color, background: color + "1a", padding: "3px 10px", borderRadius: 20, border: `1px solid ${color}33`, whiteSpace: "nowrap" }}>
-      {score}/10
+    <div style={{ position: "relative", width: 136, height: 136, flexShrink: 0 }}>
+      <svg width="136" height="136" style={{ transform: "rotate(-90deg)" }}>
+        <circle cx="68" cy="68" r={r} fill="none" stroke="#1e293b" strokeWidth="12" />
+        <circle
+          cx="68" cy="68" r={r} fill="none"
+          stroke={color} strokeWidth="12"
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div style={{
+        position: "absolute", top: "50%", left: "50%",
+        transform: "translate(-50%,-50%)", textAlign: "center",
+      }}>
+        <div style={{ fontSize: 30, fontWeight: 900, color, lineHeight: 1 }}>{score}</div>
+        <div style={{ fontSize: 10, color: "#475569", fontWeight: 700, letterSpacing: 1, marginTop: 2 }}>SCORE</div>
+      </div>
     </div>
   );
 }
 
-function ProgressBar({ score }) {
-  const color = score >= 8 ? "#22c55e" : score >= 5 ? "#f59e0b" : ACCENT;
+// ── Category Card ────────────────────────────────────────────────────────────
+function CategoryCard({ cat }) {
+  const [open, setOpen] = useState(false);
+  const color = STATUS_COLOR[cat.status] || "#64748b";
+  const icon = ICONS[cat.name] || "📊";
+
   return (
-    <div style={{ height: 3, background: "rgba(255,255,255,0.08)", borderRadius: 2, margin: "0 0 14px", overflow: "hidden" }}>
-      <div style={{ height: "100%", width: `${score * 10}%`, background: color, borderRadius: 2, transition: "width 0.6s ease" }} />
+    <div style={{
+      background: "#0f172a",
+      border: `1px solid ${open ? "#EB3255" : "#1e293b"}`,
+      borderRadius: 8,
+      marginBottom: 8,
+      overflow: "hidden",
+      transition: "border-color 0.2s",
+    }}>
+      {/* Header row */}
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          padding: "14px 16px", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 12,
+        }}
+      >
+        <div style={{
+          width: 38, height: 38, borderRadius: "50%",
+          background: "#1e293b",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 17, flexShrink: 0,
+        }}>
+          {icon}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: "#f1f5f9", fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {cat.name}
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
+            Score: <span style={{ color, fontWeight: 700 }}>{cat.score}/100</span>
+          </div>
+        </div>
+        <div style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+          color, background: `${color}20`,
+          padding: "3px 8px", borderRadius: 4, flexShrink: 0,
+        }}>
+          {STATUS_LABEL[cat.status] || cat.status?.toUpperCase()}
+        </div>
+        <div style={{ color: "#475569", fontSize: 14, marginLeft: 4 }}>{open ? "▲" : "▼"}</div>
+      </div>
+
+      {/* Expanded content */}
+      {open && (
+        <div style={{ borderTop: "1px solid #1e293b", padding: "16px" }}>
+          <div style={{ display: "grid", gap: 12 }}>
+            {[
+              { label: "BEFUND", labelColor: "#64748b", text: cat.finding },
+              { label: "PROBLEM", labelColor: "#ef4444", text: cat.problem },
+              { label: "EMPFEHLUNG", labelColor: "#EB3255", text: cat.recommendation },
+            ].map(({ label, labelColor, text }) => (
+              <div key={label}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: labelColor, letterSpacing: 1, marginBottom: 4 }}>
+                  {label}
+                </div>
+                <div style={{ color: "#cbd5e1", fontSize: 13, lineHeight: 1.7 }}>{text}</div>
+              </div>
+            ))}
+          </div>
+          {/* Score bar */}
+          <div style={{ marginTop: 14, height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${cat.score}%`, background: color, borderRadius: 2 }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-export default function FunnelRoentgen() {
+// ── Main App ─────────────────────────────────────────────────────────────────
+export default function App() {
   const [url, setUrl] = useState("");
-  const [phase, setPhase] = useState("input");
+  const [step, setStep] = useState("idle"); // idle | fetching | analyzing | done | error
   const [report, setReport] = useState(null);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [scanStep, setScanStep] = useState(0);
-  const [open, setOpen] = useState(null);
+  const [error, setError] = useState("");
+  const [statusMsg, setStatusMsg] = useState("");
 
-  const steps = [
-    "Funnel wird geladen...",
-    "Seitenstruktur wird analysiert...",
-    "Headline & Copy wird geprüft...",
-    "Trust-Elemente werden gescannt...",
-    "Conversion-Schwachstellen identifiziert...",
-    "Report wird generiert...",
-  ];
-
-  async function runAnalysis() {
+  async function runAudit() {
+    const cleanUrl = url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`;
     if (!url.trim()) return;
-    setPhase("scanning");
-    setScanStep(0);
-    const iv = setInterval(() => setScanStep(s => Math.min(s + 1, steps.length - 1)), 3000);
 
+    setStep("fetching");
+    setError("");
+    setReport(null);
+    setStatusMsg("Seite wird geladen (Jina Reader rendert JavaScript)...");
+
+    // ── Schritt 1: Jina im Browser aufrufen ────────────────────────────────
+    let pageContent = "";
     try {
-      // Schritt 1: Jina Reader im Browser aufrufen (kein Server-Timeout)
-      let pageContent = "";
-      try {
-        const jinaRes = await fetch(`https://r.jina.ai/${url.trim()}`, {
-          headers: { "Accept": "text/plain", "X-Return-Format": "text" },
-        });
-        if (jinaRes.ok) {
-          const text = await jinaRes.text();
-          if (text && text.length > 200) {
-            pageContent = text.slice(0, 10000);
-          }
-        }
-      } catch {
-        pageContent = "";
+      const jinaRes = await fetch(`https://r.jina.ai/${cleanUrl}`, {
+        headers: { Accept: "text/plain" },
+      });
+
+      if (!jinaRes.ok) {
+        throw new Error(`HTTP ${jinaRes.status} — Seite nicht erreichbar`);
       }
 
-      // Schritt 2: Text + URL an API schicken — API ruft nur Claude auf (~8s)
+      pageContent = await jinaRes.text();
+
+      if (!pageContent || pageContent.trim().length < 50) {
+        throw new Error("Jina hat keinen Inhalt zurückgegeben (Seite möglicherweise leer oder geblockt)");
+      }
+    } catch (err) {
+      setStep("error");
+      setError(`Seite konnte nicht geladen werden: ${err.message}`);
+      return;
+    }
+
+    // ── Schritt 2: Analyse-API aufrufen ────────────────────────────────────
+    setStep("analyzing");
+    setStatusMsg("KI analysiert deinen Funnel... (ca. 20 Sekunden)");
+
+    try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), pageContent }),
+        body: JSON.stringify({ url: cleanUrl, pageContent }),
       });
 
-      clearInterval(iv);
+      // Erst als Text lesen, dann parsen — sicher gegen HTML-Fehlerseiten
+      const rawText = await res.text();
 
-      const text = await res.text();
-      let parsed;
+      let data;
       try {
-        parsed = JSON.parse(text);
+        data = JSON.parse(rawText);
       } catch {
-        throw new Error("Server-Fehler. Bitte nochmal versuchen.");
+        throw new Error(
+          `Server hat ungültige Antwort zurückgegeben: ${rawText.slice(0, 200)}`
+        );
       }
 
-      if (parsed.error) throw new Error(parsed.error);
-      if (!parsed.sections) throw new Error("Ungültige Antwort. Bitte nochmal versuchen.");
+      if (!res.ok) {
+        throw new Error(data.error || `Server-Fehler ${res.status}`);
+      }
 
-      setReport(parsed);
-      setPhase("report");
-    } catch (e) {
-      clearInterval(iv);
-      setErrorMsg(e.message || "Unbekannter Fehler");
-      setPhase("error");
+      if (!data.categories || !Array.isArray(data.categories)) {
+        throw new Error("Report-Struktur ungültig — 'categories' fehlt");
+      }
+
+      setReport(data);
+      setStep("done");
+    } catch (err) {
+      setStep("error");
+      setError(`Analyse-Fehler: ${err.message}`);
     }
   }
 
-  const base = { fontFamily: "'Inter', system-ui, sans-serif" };
-
-  if (phase === "input") return (
-    <div style={{ ...base, minHeight: 480, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
-      <div style={{ width: "100%", maxWidth: 560, background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)", borderRadius: 18, padding: "2.5rem 2rem", marginBottom: "1rem" }}>
-        <div style={{ fontSize: 11, letterSpacing: 3, fontWeight: 700, color: ACCENT, marginBottom: 14 }}>OCHSOCHAL.DE</div>
-        <h1 style={{ margin: "0 0 10px", fontSize: "clamp(28px,5vw,46px)", fontWeight: 900, color: "#fff", lineHeight: 1.05, letterSpacing: -1 }}>
-          FUNNEL<span style={{ color: ACCENT }}>RÖNTGEN</span>
-        </h1>
-        <p style={{ margin: "0 0 2rem", fontSize: 15, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
-          URL eingeben. 60 Sekunden warten. 12 kritische Conversion-Faktoren analysiert, bewertet, konkrete Empfehlungen geliefert.
-        </p>
-        <input
-          value={url}
-          onChange={e => setUrl(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && runAnalysis()}
-          placeholder="https://dein-funnel.de/landing-page"
-          style={{ width: "100%", padding: "13px 15px", fontSize: 14, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, color: "#fff", outline: "none", boxSizing: "border-box", marginBottom: 10 }}
-        />
-        <button onClick={runAnalysis} style={{ width: "100%", padding: "14px", background: ACCENT, color: "#fff", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 800, cursor: "pointer", letterSpacing: 0.3 }}>
-          Funnel jetzt röntgen →
-        </button>
-      </div>
-      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
-        {["12 Analyse-Bereiche", "KI-gestützte Diagnose", "Konkrete Empfehlungen"].map(t => (
-          <div key={t} style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ color: ACCENT }}>✓</span>{t}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  if (phase === "scanning") return (
-    <div style={{ ...base, minHeight: 420, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem" }}>
-      <div style={{ background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)", borderRadius: 18, padding: "2.5rem", width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-        <div style={{ position: "relative", width: 70, height: 70, marginBottom: "1.5rem" }}>
-          <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `3px solid transparent`, borderTopColor: ACCENT, animation: "spin 0.7s linear infinite" }} />
-          <div style={{ position: "absolute", inset: 8, borderRadius: "50%", border: `2px solid transparent`, borderTopColor: ACCENT + "66", animation: "spin 1.2s linear infinite reverse" }} />
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🔬</div>
-        </div>
-        <div style={{ fontSize: 11, letterSpacing: 3, color: ACCENT, marginBottom: 10, fontWeight: 700 }}>ANALYSE LÄUFT</div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{steps[scanStep]}</div>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: "1.5rem", wordBreak: "break-all" }}>
-          {url.length > 55 ? url.substring(0, 55) + "..." : url}
-        </div>
-        <div style={{ width: "100%", height: 4, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", background: ACCENT, borderRadius: 2, width: `${((scanStep + 1) / steps.length) * 100}%`, transition: "width 0.6s ease" }} />
-        </div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>Schritt {scanStep + 1} von {steps.length}</div>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
-
-  if (phase === "error") return (
-    <div style={{ ...base, padding: "3rem 1.5rem", textAlign: "center" }}>
-      <div style={{ fontSize: 40, marginBottom: 16 }}>⚠️</div>
-      <h2 style={{ margin: "0 0 8px" }}>Analyse fehlgeschlagen</h2>
-      <p style={{ color: "var(--color-text-secondary)", marginBottom: 24 }}>{errorMsg}</p>
-      <button onClick={() => { setPhase("input"); setReport(null); }} style={{ padding: "12px 28px", background: ACCENT, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>← Nochmal versuchen</button>
-    </div>
-  );
-
-  if (!report) return null;
-
-  const overallColor = report.gesamtScore >= 70 ? "#22c55e" : report.gesamtScore >= 50 ? "#f59e0b" : ACCENT;
-
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ ...base, maxWidth: 700, margin: "0 auto", padding: "1.5rem 1rem" }}>
-      <div style={{ background: "linear-gradient(150deg,#1A1A2E 0%,#151554 100%)", borderRadius: 16, padding: "1.75rem 1.5rem 1.5rem", marginBottom: "1.25rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: ACCENT, fontWeight: 700, marginBottom: 10 }}>OCHSOCHAL · FUNNEL RÖNTGEN</div>
-            <div style={{ fontSize: "clamp(20px,3vw,28px)", fontWeight: 900, color: "#fff", lineHeight: 1.1, marginBottom: 8 }}>Audit Report</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", wordBreak: "break-all" }}>{url}</div>
-          </div>
-          <div style={{ textAlign: "center", flexShrink: 0 }}>
-            <ScoreRing score={report.gesamtScore} size={88} />
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", letterSpacing: 1.5, marginTop: 4 }}>GESAMT-SCORE</div>
-          </div>
+    <div style={{
+      minHeight: "100vh",
+      background: "#020817",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      color: "#f1f5f9",
+    }}>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        * { box-sizing: border-box; }
+        input::placeholder { color: #334155; }
+        @media print {
+          button { display: none !important; }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+
+      {/* ── Header ── */}
+      <div style={{
+        borderBottom: "1px solid #0f172a",
+        padding: "16px 24px",
+        display: "flex", alignItems: "center", gap: 12,
+      }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 8,
+          background: "#EB3255",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 18,
+        }}>
+          🔬
         </div>
-        <div style={{ marginTop: "1.25rem", padding: "1rem", background: "rgba(255,255,255,0.05)", borderRadius: 10, borderLeft: `3px solid ${overallColor}`, fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.65 }}>
-          {report.gesamtBewertung}
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: -0.5 }}>
+            Funnel <span style={{ color: "#EB3255" }}>Röntgen</span>
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>by ochsocial</div>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: "1.25rem" }}>
-        {[
-          { label: "Kritischstes Problem", value: report.topProblem, accent: ACCENT, icon: "🔴" },
-          { label: "Schnellster Quick Win", value: report.quickWin, accent: "#22c55e", icon: "⚡" },
-        ].map(c => (
-          <div key={c.label} style={{ background: "var(--color-background-secondary)", borderRadius: 10, padding: "1rem", border: `0.5px solid var(--color-border-tertiary)` }}>
-            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6, display: "flex", gap: 5, alignItems: "center" }}>
-              <span style={{ fontSize: 13 }}>{c.icon}</span>
-              <span style={{ fontWeight: 700, color: c.accent, letterSpacing: 0.5 }}>{c.label}</span>
+      <div style={{ maxWidth: 700, margin: "0 auto", padding: "40px 20px" }}>
+
+        {/* ── Hero (nur bei idle) ── */}
+        {(step === "idle" || step === "error") && (
+          <>
+            <div style={{ textAlign: "center", marginBottom: 40 }}>
+              <div style={{
+                display: "inline-block",
+                background: "#EB325520", color: "#EB3255",
+                fontSize: 11, fontWeight: 700, letterSpacing: 2,
+                padding: "6px 16px", borderRadius: 100, marginBottom: 20,
+              }}>
+                KI-POWERED AUDIT
+              </div>
+              <h1 style={{
+                fontSize: "clamp(26px, 5vw, 42px)", fontWeight: 900,
+                lineHeight: 1.1, marginBottom: 16, letterSpacing: -1,
+              }}>
+                Dein Funnel unter dem{" "}
+                <span style={{ color: "#EB3255" }}>Röntgengerät</span>
+              </h1>
+              <p style={{
+                color: "#64748b", fontSize: 16, lineHeight: 1.7,
+                maxWidth: 460, margin: "0 auto",
+              }}>
+                URL eingeben. In ~60 Sekunden bekommst du einen vollständigen
+                Audit mit 12 Kategorien und konkreten Handlungsempfehlungen.
+              </p>
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--color-text-primary)" }}>{c.value}</div>
-          </div>
-        ))}
-      </div>
 
-      <div style={{ background: "var(--color-background-secondary)", borderRadius: 10, padding: "1rem 1.25rem", border: "0.5px solid var(--color-border-tertiary)", marginBottom: "1.25rem" }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "var(--color-text-secondary)", marginBottom: 12 }}>SCHNELLÜBERSICHT</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
-          {report.sections?.map(s => {
-            const c = s.score >= 8 ? "#22c55e" : s.score >= 5 ? "#f59e0b" : ACCENT;
-            return (
-              <div key={s.id} onClick={() => setOpen(open === s.id ? null : s.id)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: c, flexShrink: 0 }} />
-                <span style={{ fontSize: 12, color: "var(--color-text-primary)", flex: 1 }}>{s.title}</span>
-                <span style={{ fontSize: 12, fontWeight: 800, color: c }}>{s.score}/10</span>
+            {/* Input */}
+            <div style={{ maxWidth: 560, margin: "0 auto" }}>
+              <div style={{
+                display: "flex",
+                border: "1px solid #1e293b",
+                borderRadius: 12, overflow: "hidden",
+                background: "#0f172a",
+              }}>
+                <input
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && runAudit()}
+                  placeholder="https://dein-funnel.de/landing"
+                  style={{
+                    flex: 1, background: "transparent",
+                    border: "none", outline: "none",
+                    padding: "16px 20px", fontSize: 15,
+                    color: "#f1f5f9", fontFamily: "inherit",
+                  }}
+                />
+                <button
+                  onClick={runAudit}
+                  disabled={!url.trim()}
+                  style={{
+                    background: "#EB3255", color: "white",
+                    border: "none", padding: "16px 28px",
+                    fontSize: 14, fontWeight: 700,
+                    cursor: url.trim() ? "pointer" : "not-allowed",
+                    opacity: url.trim() ? 1 : 0.5,
+                    letterSpacing: 0.5, fontFamily: "inherit",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Röntgen →
+                </button>
               </div>
-            );
-          })}
-        </div>
-      </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: "1.5rem" }}>
-        {report.sections?.map((s) => {
-          const c = s.score >= 8 ? "#22c55e" : s.score >= 5 ? "#f59e0b" : ACCENT;
-          const isOpen = open === s.id;
-          return (
-            <div key={s.id} style={{ borderRadius: 10, overflow: "hidden", border: `0.5px solid ${isOpen ? c + "55" : "var(--color-border-tertiary)"}`, background: "var(--color-background-primary)" }}>
-              <div onClick={() => setOpen(isOpen ? null : s.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "0.875rem 1rem", cursor: "pointer", background: isOpen ? "var(--color-background-secondary)" : "transparent" }}>
-                <div style={{ width: 36, height: 36, borderRadius: 9, background: c + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{s.icon}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text-primary)" }}>{s.title}</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{s.subtitle}</div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                  <ScoreBadge score={s.score} />
-                  <span style={{ fontSize: 16, color: "var(--color-text-tertiary)", display: "inline-block", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>›</span>
-                </div>
-              </div>
-              {isOpen && (
-                <div style={{ padding: "0 1rem 1rem" }}>
-                  <ProgressBar score={s.score} />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {[
-                      { label: "BEFUND", value: s.befund, border: "rgba(255,255,255,0.2)" },
-                      { label: "PROBLEM", value: s.problem, border: ACCENT },
-                      { label: "EMPFEHLUNG", value: s.empfehlung, border: "#22c55e" },
-                    ].filter(x => x.value).map(item => (
-                      <div key={item.label} style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "0.75rem 0.875rem", borderLeft: `3px solid ${item.border}` }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: item.border === "rgba(255,255,255,0.2)" ? "var(--color-text-secondary)" : item.border, marginBottom: 5 }}>{item.label}</div>
-                        <div style={{ fontSize: 13, color: "var(--color-text-primary)", lineHeight: 1.65 }}>{item.value}</div>
-                      </div>
-                    ))}
-                  </div>
+              {step === "error" && (
+                <div style={{
+                  marginTop: 16, background: "#1e0a0a",
+                  border: "1px solid #7f1d1d",
+                  borderRadius: 8, padding: "12px 16px",
+                  color: "#fca5a5", fontSize: 13, lineHeight: 1.6,
+                }}>
+                  ⚠️ {error}
                 </div>
               )}
+
+              <p style={{ textAlign: "center", color: "#1e293b", fontSize: 12, marginTop: 14 }}>
+                Kompatibel mit Perspective, ClickFunnels, WordPress, Kajabi & mehr
+              </p>
             </div>
-          );
-        })}
-      </div>
+          </>
+        )}
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button onClick={() => { setPhase("input"); setReport(null); setOpen(null); }} style={{ flex: 1, minWidth: 130, padding: "13px", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>← Neuer Funnel</button>
-        <button onClick={() => window.print()} style={{ flex: 1, minWidth: 130, padding: "13px", background: ACCENT, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Report als PDF speichern</button>
-      </div>
+        {/* ── Loading ── */}
+        {(step === "fetching" || step === "analyzing") && (
+          <div style={{ textAlign: "center", padding: "80px 20px" }}>
+            <div style={{
+              width: 56, height: 56, margin: "0 auto 24px",
+              border: "3px solid #1e293b",
+              borderTop: "3px solid #EB3255",
+              borderRadius: "50%",
+              animation: "spin 1s linear infinite",
+            }} />
+            <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 10 }}>
+              {step === "fetching" ? "Seite wird geladen..." : "KI analysiert deinen Funnel..."}
+            </div>
+            <div style={{ color: "#475569", fontSize: 14 }}>{statusMsg}</div>
+          </div>
+        )}
 
-      <div style={{ textAlign: "center", marginTop: "1.5rem", fontSize: 11, color: "var(--color-text-tertiary)" }}>
-        ochsochal.de · Funnel Röntgen · KI-gestützte Funnel-Analyse
+        {/* ── Report ── */}
+        {step === "done" && report && (
+          <div>
+            {/* Score Header */}
+            <div style={{
+              background: "#0f172a", border: "1px solid #1e293b",
+              borderRadius: 16, padding: "28px 32px",
+              marginBottom: 20, display: "flex",
+              alignItems: "center", gap: 28, flexWrap: "wrap",
+            }}>
+              <ScoreRing score={report.overallScore} />
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", letterSpacing: 2, marginBottom: 8 }}>
+                  GESAMT-AUDIT · {report.url}
+                </div>
+                <div style={{ fontSize: 15, color: "#94a3b8", lineHeight: 1.7 }}>
+                  {report.summary}
+                </div>
+                <button
+                  onClick={() => window.print()}
+                  className="no-print"
+                  style={{
+                    marginTop: 16, background: "transparent",
+                    border: "1px solid #EB3255", color: "#EB3255",
+                    padding: "8px 20px", borderRadius: 6,
+                    fontSize: 12, fontWeight: 700,
+                    cursor: "pointer", letterSpacing: 0.5, fontFamily: "inherit",
+                  }}
+                >
+                  PDF EXPORTIEREN
+                </button>
+              </div>
+            </div>
+
+            {/* Score Distribution */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 8, marginBottom: 20,
+            }}>
+              {[
+                { label: "Gut (70+)", count: report.categories.filter((c) => c.score >= 70).length, color: "#22c55e" },
+                { label: "Verbesserbar", count: report.categories.filter((c) => c.score >= 40 && c.score < 70).length, color: "#f59e0b" },
+                { label: "Kritisch", count: report.categories.filter((c) => c.score < 40).length, color: "#ef4444" },
+              ].map((item) => (
+                <div key={item.label} style={{
+                  background: "#0f172a", border: `1px solid ${item.color}30`,
+                  borderRadius: 10, padding: "16px", textAlign: "center",
+                }}>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: item.color }}>{item.count}</div>
+                  <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, marginTop: 4 }}>{item.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Categories */}
+            <div>
+              {report.categories.map((cat, i) => (
+                <CategoryCard key={i} cat={cat} />
+              ))}
+            </div>
+
+            {/* New Audit */}
+            <div className="no-print" style={{ textAlign: "center", marginTop: 32 }}>
+              <button
+                onClick={() => { setStep("idle"); setReport(null); setUrl(""); }}
+                style={{
+                  background: "#EB3255", color: "white",
+                  border: "none", padding: "14px 36px",
+                  borderRadius: 8, fontSize: 14, fontWeight: 700,
+                  cursor: "pointer", letterSpacing: 0.5, fontFamily: "inherit",
+                }}
+              >
+                Neue Analyse starten
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
