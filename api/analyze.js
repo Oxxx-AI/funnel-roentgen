@@ -7,15 +7,70 @@ export default async function handler(req) {
 
   const { url } = await req.json();
 
-  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches und Berater. Antworte NUR mit validem JSON, keine Backticks, kein Text davor oder danach. Maximal 1 Satz pro Textfeld.
+  // Jina AI Reader rendert JavaScript-Seiten vollständig (Perspective, ClickFunnels, etc.)
+  let pageContent = '';
+  try {
+    const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
+      headers: {
+        'Accept': 'text/plain',
+        'X-Return-Format': 'text',
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    const text = await jinaRes.text();
+    if (text && text.length > 200) {
+      pageContent = text.slice(0, 12000);
+    }
+  } catch {
+    pageContent = '';
+  }
 
-{"gesamtScore":65,"gesamtBewertung":"2 Sätze max.","topProblem":"1 Satz.","quickWin":"1 Satz.","sections":[{"id":"erstereindruck","title":"Erster Eindruck","subtitle":"Above the Fold","icon":"👁","score":6,"befund":"1 Satz.","problem":"1 Satz.","empfehlung":"1 Satz."}]}
+  const userMessage = pageContent.length > 200
+    ? `Analysiere diesen Funnel.\nURL: ${url}\n\nSeiteninhalt:\n${pageContent}`
+    : `Analysiere diesen Funnel.\nURL: ${url}\n\nDer Seiteninhalt konnte nicht geladen werden. Weise in jeder Section darauf hin.`;
 
-12 sections exakt in dieser Reihenfolge:
-erstereindruck👁, headline🎯, valueproposition💎, zielgruppe👥, socialproof⭐, cta🔴, copy✍️, einwandbehandlung🛡, conversionkiller⚠️, mobile📱, technik⚙️, fazit📋
+  const SYSTEM_PROMPT = `Du bist Funnel-Analyst für DACH-Coaches, Berater und Agenturen im Hochpreissegment.
 
-Titles: Erster Eindruck, Headline & Hook, Value Proposition, Zielgruppen-Fit, Social Proof, Call-to-Action, Copy & Sprache, Einwandbehandlung, Conversion-Killer, Mobile Experience, Technische Punkte, Prioritäten & Fazit
-Subtitles: Above the Fold, Aufmerksamkeit & Relevanz, Nutzenversprechen, Ansprache & Relevanz, Vertrauen & Glaubwürdigkeit, Aufforderung & Klarheit, Überzeugungskraft, Bedenken & Widerstände, Ablenkungen & Fehler, Smartphone-Optimierung, Ladezeit & Performance, Dein Aktionsplan`;
+REGEL 1: Antworte NUR mit validem JSON. Keine Backticks, kein Text davor oder danach.
+REGEL 2: Analysiere ausschließlich was im Seiteninhalt steht. Niemals erfinden.
+REGEL 3: Zitiere konkret was du siehst (Headline-Text, CTA-Text, Testimonials etc.).
+REGEL 4: Maximal 2 kurze Sätze pro Textfeld.
+
+JSON-Struktur:
+{
+  "gesamtScore": 65,
+  "gesamtBewertung": "Max 2 Sätze.",
+  "topProblem": "Max 1 Satz.",
+  "quickWin": "Max 1 Satz.",
+  "sections": [
+    {
+      "id": "erstereindruck",
+      "title": "Erster Eindruck",
+      "subtitle": "Above the Fold",
+      "icon": "👁",
+      "score": 6,
+      "befund": "Was tatsächlich auf der Seite steht.",
+      "problem": "Konkretes Problem.",
+      "empfehlung": "Konkrete Empfehlung."
+    }
+  ]
+}
+
+Genau 12 sections in dieser Reihenfolge:
+1. id "erstereindruck", title "Erster Eindruck", subtitle "Above the Fold", icon "👁"
+2. id "headline", title "Headline & Hook", subtitle "Aufmerksamkeit & Relevanz", icon "🎯"
+3. id "valueproposition", title "Value Proposition", subtitle "Nutzenversprechen", icon "💎"
+4. id "zielgruppe", title "Zielgruppen-Fit", subtitle "Ansprache & Relevanz", icon "👥"
+5. id "socialproof", title "Social Proof", subtitle "Vertrauen & Glaubwürdigkeit", icon "⭐"
+6. id "cta", title "Call-to-Action", subtitle "Aufforderung & Klarheit", icon "🔴"
+7. id "copy", title "Copy & Sprache", subtitle "Überzeugungskraft", icon "✍️"
+8. id "einwandbehandlung", title "Einwandbehandlung", subtitle "Bedenken & Widerstände", icon "🛡"
+9. id "conversionkiller", title "Conversion-Killer", subtitle "Ablenkungen & Fehler", icon "⚠️"
+10. id "mobile", title "Mobile Experience", subtitle "Smartphone-Optimierung", icon "📱"
+11. id "technik", title "Technische Punkte", subtitle "Ladezeit & Performance", icon "⚙️"
+12. id "fazit", title "Prioritäten & Fazit", subtitle "Dein Aktionsplan", icon "📋"
+
+Score: 1-4 kritisch, 5-7 ausbaufähig, 8-10 gut.`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -26,10 +81,10 @@ Subtitles: Above the Fold, Aufmerksamkeit & Relevanz, Nutzenversprechen, Ansprac
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 3000,
         system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: `Analysiere: ${url}` }],
+        messages: [{ role: 'user', content: userMessage }],
       }),
     });
 
@@ -45,7 +100,7 @@ Subtitles: Above the Fold, Aufmerksamkeit & Relevanz, Nutzenversprechen, Ansprac
     }
 
     if (!parsed) {
-      return new Response(JSON.stringify({ error: 'JSON Parse Fehler' }), { status: 500 });
+      return new Response(JSON.stringify({ error: 'Bitte nochmal versuchen' }), { status: 500 });
     }
 
     return new Response(JSON.stringify(parsed), {
